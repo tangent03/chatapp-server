@@ -1,30 +1,39 @@
-import express from "express";
-import { connectDB } from "./utils/features.js";
-import dotenv from "dotenv";
-import { errorMiddleware } from "./middlewares/error.js";
-import cookieParser from "cookie-parser";
-import { Server } from "socket.io";
-import { createServer } from "http";
-import { v4 as uuid } from "uuid";
-import cors from "cors";
 import { v2 as cloudinary } from "cloudinary";
+import cookieParser from "cookie-parser";
+import cors from "cors";
+import dotenv from "dotenv";
+import express from "express";
+import { createServer } from "http";
+import mongoose from "mongoose";
+import { Server } from "socket.io";
+import { corsOptions } from "./constants/config.js";
 import {
-  CHAT_JOINED,
-  CHAT_LEAVED,
-  NEW_MESSAGE,
-  NEW_MESSAGE_ALERT,
-  ONLINE_USERS,
-  START_TYPING,
-  STOP_TYPING,
+    CALL_ACCEPTED,
+    CALL_ENDED,
+    CALL_REJECTED,
+    CALL_REQUEST,
+    CHAT_JOINED,
+    CHAT_LEAVED,
+    ICE_CANDIDATE,
+    MESSAGE_REACTION,
+    MESSAGE_SEEN,
+    NEW_MESSAGE,
+    NEW_MESSAGE_ALERT,
+    ONLINE_USERS,
+    START_TYPING,
+    STOP_TYPING,
+    WEBRTC_ANSWER,
+    WEBRTC_OFFER,
 } from "./constants/events.js";
 import { getSockets } from "./lib/helper.js";
-import { Message } from "./models/message.js";
-import { corsOptions } from "./constants/config.js";
 import { socketAuthenticator } from "./middlewares/auth.js";
+import { errorMiddleware } from "./middlewares/error.js";
+import { Message } from "./models/message.js";
+import { connectDB } from "./utils/features.js";
 
-import userRoute from "./routes/user.js";
-import chatRoute from "./routes/chat.js";
 import adminRoute from "./routes/admin.js";
+import chatRoute from "./routes/chat.js";
+import userRoute from "./routes/user.js";
 
 dotenv.config({
   path: "./.env",
@@ -53,10 +62,30 @@ const io = new Server(server, {
 
 app.set("io", io);
 
-// Using Middlewares Here
+// Set allowed origins based on environment
+const allowedOrigins = process.env.NODE_ENV === 'production' 
+  ? [process.env.FRONTEND_URL, 'https://chatapp-frontend-eosin-beta.vercel.app'] 
+  : ['http://localhost:5173', 'http://localhost:4173', 'http://localhost:3000'];
+
+// Configure CORS
+app.use(cors({
+  origin: function(origin, callback) {
+    // Allow requests with no origin (like mobile apps, curl requests)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) === -1) {
+      const msg = `The CORS policy for this site does not allow access from the specified Origin: ${origin}`;
+      return callback(new Error(msg), false);
+    }
+    return callback(null, true);
+  },
+  credentials: true, // Allow cookies to be sent with requests
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
+
 app.use(express.json());
 app.use(cookieParser());
-app.use(cors(corsOptions));
 
 app.use("/api/v1/user", userRoute);
 app.use("/api/v1/chat", chatRoute);
@@ -76,37 +105,75 @@ io.use((socket, next) => {
 
 io.on("connection", (socket) => {
   const user = socket.user;
+  console.log(`User connected: ${user._id} (${user.name}), Socket ID: ${socket.id}`);
   userSocketIDs.set(user._id.toString(), socket.id);
+  
+  // Broadcast online status when a user connects
+  onlineUsers.add(user._id.toString());
+  socket.broadcast.emit(ONLINE_USERS, Array.from(onlineUsers));
+  
+  // Send current online users to the newly connected user
+  socket.emit(ONLINE_USERS, Array.from(onlineUsers));
 
   socket.on(NEW_MESSAGE, async ({ chatId, members, message }) => {
-    const messageForRealTime = {
-      content: message,
-      _id: uuid(),
-      sender: {
-        _id: user._id,
-        name: user.name,
-      },
-      chat: chatId,
-      createdAt: new Date().toISOString(),
-    };
-
-    const messageForDB = {
-      content: message,
-      sender: user._id,
-      chat: chatId,
-    };
-
-    const membersSocket = getSockets(members);
-    io.to(membersSocket).emit(NEW_MESSAGE, {
-      chatId,
-      message: messageForRealTime,
-    });
-    io.to(membersSocket).emit(NEW_MESSAGE_ALERT, { chatId });
-
+    console.log(`New message in chat ${chatId} from ${user.name}`);
+    
     try {
-      await Message.create(messageForDB);
+      // Create DB message first
+      const messageForDB = {
+        content: message,
+        sender: user._id,
+        chat: chatId,
+        reactions: [],
+        seen: false,
+      };
+      
+      // Save message to database first before emitting
+      const savedMessage = await Message.create(messageForDB);
+      
+      if (!savedMessage || !savedMessage._id) {
+        throw new Error("Failed to save message to database");
+      }
+      
+      // Now create the real-time message with the actual DB ID
+      const messageForRealTime = {
+        content: message,
+        _id: savedMessage._id,
+        sender: {
+          _id: user._id,
+          name: user.name,
+        },
+        chat: chatId,
+        createdAt: new Date().toISOString(),
+        reactions: [],
+        seen: false,
+      };
+
+      // Get member socket IDs
+      const membersSocket = getSockets(members);
+      
+      // Send to all members including sender for consistency
+      io.to(membersSocket).emit(NEW_MESSAGE, {
+        chatId,
+        message: messageForRealTime,
+      });
+      
+      // Send alert to all chat members except sender
+      const otherMembersSocket = members
+        .filter(m => m.toString() !== user._id.toString())
+        .map(m => userSocketIDs.get(m.toString()))
+        .filter(Boolean);
+        
+      io.to(otherMembersSocket).emit(NEW_MESSAGE_ALERT, { chatId });
+      
+      console.log(`Message sent successfully: ${messageForRealTime._id}`);
     } catch (error) {
-      throw new Error(error);
+      console.error("Error saving message:", error);
+      // Notify only the sender about the error
+      socket.emit("ERROR", { 
+        message: "Failed to save message", 
+        error: error.message 
+      });
     }
   });
 
@@ -118,6 +185,141 @@ io.on("connection", (socket) => {
   socket.on(STOP_TYPING, ({ members, chatId }) => {
     const membersSockets = getSockets(members);
     socket.to(membersSockets).emit(STOP_TYPING, { chatId });
+  });
+
+  // Handle message reactions
+  socket.on(MESSAGE_REACTION, async ({ messageId, reaction, userId }) => {
+    try {
+      console.log("Received reaction:", { messageId, reaction, userId });
+      
+      // Find the message in database
+      const message = await Message.findById(messageId);
+      if (!message) {
+        console.log("Message not found:", messageId);
+        return;
+      }
+      
+      console.log("Message found:", message._id);
+      
+      // Import Chat model dynamically to avoid circular dependency
+      const Chat = mongoose.model('Chat');
+      
+      // Get chat members to notify them
+      const chat = await Chat.findById(message.chat);
+      if (!chat) {
+        console.log("Chat not found:", message.chat);
+        return;
+      }
+      
+      console.log("Chat found:", chat._id);
+      
+      // Ensure reactions array exists and is valid
+      let reactions = [];
+      if (Array.isArray(message.reactions)) {
+        reactions = [...message.reactions];
+      }
+      
+      // Validate userId and reaction
+      if (!userId || !reaction) {
+        console.log("Invalid userId or reaction:", { userId, reaction });
+        return;
+      }
+      
+      // Check if user already reacted with this emoji
+      const existingReactionIndex = reactions.findIndex(
+        r => r.userId && r.userId.toString() === userId.toString() && r.emoji === reaction
+      );
+      
+      if (existingReactionIndex >= 0) {
+        // Remove reaction if it exists
+        reactions = reactions.filter((_, index) => index !== existingReactionIndex);
+      } else {
+        // Add new reaction
+        reactions.push({ userId, emoji: reaction });
+      }
+      
+      // Update message in database using findByIdAndUpdate to avoid validation
+      await Message.findByIdAndUpdate(
+        messageId,
+        { $set: { reactions } },
+        { new: true, runValidators: false }
+      );
+      
+      // Group reactions by emoji and count them
+      const groupedReactions = reactions.reduce((acc, curr) => {
+        if (!curr || !curr.emoji) return acc;
+        
+        const existing = acc.find(r => r.emoji === curr.emoji);
+        if (existing) {
+          existing.count += 1;
+          if (curr.userId) {
+            existing.users.push(curr.userId.toString());
+          }
+        } else {
+          acc.push({ 
+            emoji: curr.emoji, 
+            count: 1, 
+            users: curr.userId ? [curr.userId.toString()] : [] 
+          });
+        }
+        return acc;
+      }, []);
+      
+      console.log("Grouped reactions to send:", groupedReactions);
+      
+      // Notify all members
+      const membersSockets = getSockets(chat.members);
+      io.to(membersSockets).emit(MESSAGE_REACTION, {
+        messageId,
+        chatId: message.chat.toString(),
+        reactions: groupedReactions,
+      });
+    } catch (error) {
+      console.error("Error handling reaction:", error);
+    }
+  });
+  
+  // Handle message seen status
+  socket.on(MESSAGE_SEEN, async ({ messageId, chatId, userId }) => {
+    try {
+      console.log("Received message seen:", { messageId, chatId, userId });
+      
+      // Use findOneAndUpdate instead of find + save to avoid validation errors
+      const result = await Message.findByIdAndUpdate(
+        messageId, 
+        { $set: { seen: true } },
+        { new: true, runValidators: false }
+      );
+      
+      if (!result) {
+        console.log("Message not found for seen status:", messageId);
+        return;
+      }
+      
+      console.log("Message updated seen status:", result._id);
+      
+      // Import Chat model dynamically to avoid circular dependency
+      const Chat = mongoose.model('Chat');
+      
+      // Get chat to notify members
+      const chat = await Chat.findById(chatId);
+      if (!chat) {
+        console.log("Chat not found for seen status:", chatId);
+        return;
+      }
+      
+      console.log("Chat found for seen status:", chat._id);
+      
+      // Notify all members
+      const membersSockets = getSockets(chat.members);
+      io.to(membersSockets).emit(MESSAGE_SEEN, {
+        messageId,
+        chatId,
+        seen: true,
+      });
+    } catch (error) {
+      console.error("Error handling seen status:", error);
+    }
   });
 
   socket.on(CHAT_JOINED, ({ userId, members }) => {
@@ -135,9 +337,118 @@ io.on("connection", (socket) => {
   });
 
   socket.on("disconnect", () => {
+    console.log(`User disconnected: ${user._id} (${user.name})`);
     userSocketIDs.delete(user._id.toString());
     onlineUsers.delete(user._id.toString());
-    socket.broadcast.emit(ONLINE_USERS, Array.from(onlineUsers));
+    io.emit(ONLINE_USERS, Array.from(onlineUsers));
+  });
+
+  // WebRTC Call Events
+  socket.on(CALL_REQUEST, (data) => {
+    console.log('Call request received:', data);
+    
+    // Check if receiverId exists
+    if (!data.receiverId) {
+      console.error('Missing receiverId in call request:', data);
+      socket.emit(CALL_REJECTED, {
+        to: data.callerId,
+        message: 'Invalid call request: Missing receiverId'
+      });
+      return;
+    }
+    
+    // Get receiver's socket ID
+    const receiverSocketId = userSocketIDs.get(data.receiverId.toString());
+    console.log(`Looking for receiver socket for ID: ${data.receiverId}`);
+    console.log(`Found socket ID: ${receiverSocketId || 'Not found'}`);
+    console.log(`Current userSocketIDs map:`, Array.from(userSocketIDs.entries()));
+    
+    if (receiverSocketId) {
+      // Forward call request to receiver
+      console.log(`Forwarding call request to socket ID: ${receiverSocketId}`);
+      io.to(receiverSocketId).emit(CALL_REQUEST, data);
+    } else {
+      // Receiver not online, send rejection
+      console.log(`Receiver ${data.receiverId} not online, rejecting call`);
+      socket.emit(CALL_REJECTED, {
+        to: data.callerId,
+        from: data.receiverId,
+        message: 'User is offline'
+      });
+    }
+  });
+
+  socket.on(CALL_ACCEPTED, (data) => {
+    console.log('Call accepted:', data);
+    
+    // Get caller's socket ID
+    const callerSocketId = userSocketIDs.get(data.to.toString());
+    
+    if (callerSocketId) {
+      // Forward acceptance to caller
+      io.to(callerSocketId).emit(CALL_ACCEPTED, data);
+    }
+  });
+
+  socket.on(CALL_REJECTED, (data) => {
+    console.log('Call rejected:', data);
+    
+    // Get caller's socket ID
+    const callerSocketId = userSocketIDs.get(data.to.toString());
+    
+    if (callerSocketId) {
+      // Forward rejection to caller
+      io.to(callerSocketId).emit(CALL_REJECTED, data);
+    }
+  });
+
+  socket.on(CALL_ENDED, ({ to, from }) => {
+    console.log(`Call ended by ${from} to ${to}`);
+    
+    if (!to || !from) {
+      console.error('Missing to or from in CALL_ENDED event');
+      return;
+    }
+    
+    // Get the socket ID of the target user
+    const toSocketId = userSocketIDs.get(to.toString());
+    
+    if (toSocketId) {
+      console.log(`Found socket ID for recipient: ${toSocketId}`);
+      io.to(toSocketId).emit(CALL_ENDED, { from });
+    } else {
+      console.error(`No socket ID found for recipient: ${to}`);
+    }
+  });
+
+  socket.on(ICE_CANDIDATE, (data) => {
+    // Get receiver's socket ID
+    const receiverSocketId = userSocketIDs.get(data.to.toString());
+    
+    if (receiverSocketId) {
+      // Forward ICE candidate to receiver
+      io.to(receiverSocketId).emit(ICE_CANDIDATE, data);
+    }
+  });
+
+  socket.on(WEBRTC_OFFER, (data) => {
+    // Get receiver's socket ID
+    const receiverSocketId = userSocketIDs.get(data.to.toString());
+    
+    if (receiverSocketId) {
+      // Forward offer to receiver
+      io.to(receiverSocketId).emit(WEBRTC_OFFER, data);
+    }
+  });
+
+  socket.on(WEBRTC_ANSWER, (data) => {
+    // Get caller's socket ID
+    const callerSocketId = userSocketIDs.get(data.to.toString());
+    
+    if (callerSocketId) {
+      // Forward answer to caller
+      io.to(callerSocketId).emit(WEBRTC_ANSWER, data);
+    }
   });
 });
 
@@ -147,4 +458,5 @@ server.listen(port, () => {
   console.log(`Server is running on port ${port} in ${envMode} Mode`);
 });
 
-export { envMode, adminSecretKey, userSocketIDs };
+export { adminSecretKey, envMode, userSocketIDs };
+

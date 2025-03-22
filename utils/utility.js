@@ -5,4 +5,8 @@ class ErrorHandler extends Error {
     }
   }
   
-  export { ErrorHandler };
+  const asyncHandler = (func) => (req, res, next) => {
+    Promise.resolve(func(req, res, next)).catch(next);
+  };
+  
+  export { ErrorHandler, asyncHandler };

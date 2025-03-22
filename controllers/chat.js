@@ -1,20 +1,20 @@
-import { TryCatch } from "../middlewares/error.js";
-import { ErrorHandler } from "../utils/utility.js";
-import { Chat } from "../models/chat.js";
 import {
-  deletFilesFromCloudinary,
-  emitEvent,
-  uploadFilesToCloudinary,
-} from "../utils/features.js";
-import {
-  ALERT,
-  NEW_MESSAGE,
-  NEW_MESSAGE_ALERT,
-  REFETCH_CHATS,
+    ALERT,
+    NEW_MESSAGE,
+    NEW_MESSAGE_ALERT,
+    REFETCH_CHATS,
 } from "../constants/events.js";
 import { getOtherMember } from "../lib/helper.js";
-import { User } from "../models/user.js";
+import { TryCatch } from "../middlewares/error.js";
+import { Chat } from "../models/chat.js";
 import { Message } from "../models/message.js";
+import { User } from "../models/user.js";
+import {
+    deletFilesFromCloudinary,
+    emitEvent,
+    uploadFilesToCloudinary,
+} from "../utils/features.js";
+import { ErrorHandler } from "../utils/utility.js";
 
 const newGroupChat = TryCatch(async (req, res, next) => {
   const { name, members } = req.body;
@@ -72,14 +72,15 @@ const getMyGroups = TryCatch(async (req, res, next) => {
   const chats = await Chat.find({
     members: req.user,
     groupChat: true,
-    creator: req.user,
   }).populate("members", "name avatar");
 
-  const groups = chats.map(({ members, _id, groupChat, name }) => ({
+  const groups = chats.map(({ members, _id, groupChat, name, creator }) => ({
     _id,
     groupChat,
     name,
+    creator,
     avatar: members.slice(0, 3).map(({ avatar }) => avatar.url),
+    members: members.map(member => member._id),
   }));
 
   return res.status(200).json({
@@ -408,15 +409,6 @@ const getMessages = TryCatch(async (req, res, next) => {
 });
 
 export {
-  newGroupChat,
-  getMyChats,
-  getMyGroups,
-  addMembers,
-  removeMember,
-  leaveGroup,
-  sendAttachments,
-  getChatDetails,
-  renameGroup,
-  deleteChat,
-  getMessages,
+    addMembers, deleteChat, getChatDetails, getMessages, getMyChats,
+    getMyGroups, leaveGroup, newGroupChat, removeMember, renameGroup, sendAttachments
 };

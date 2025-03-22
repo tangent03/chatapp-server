@@ -1,36 +1,57 @@
-import mongoose, { Schema, model, Types } from "mongoose";
+import mongoose from "mongoose";
 
-const schema = new Schema(
+const messageSchema = new mongoose.Schema(
   {
-    content: String,
-
+    content: {
+      type: String,
+      required: function() {
+        // Only require content if there are no attachments
+        return this.attachments.length === 0;
+      }
+    },
     attachments: [
       {
-        public_id: {
+        url: {
           type: String,
           required: true,
         },
-        url: {
+        public_id: {
           type: String,
           required: true,
         },
       },
     ],
-
     sender: {
-      type: Types.ObjectId,
+      type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: true,
     },
     chat: {
-      type: Types.ObjectId,
+      type: mongoose.Schema.Types.ObjectId,
       ref: "Chat",
       required: true,
     },
+    reactions: [
+      {
+        userId: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          required: true,
+        },
+        emoji: {
+          type: String,
+          required: true,
+        }
+      }
+    ],
+    seen: {
+      type: Boolean,
+      default: false
+    }
   },
   {
     timestamps: true,
   }
 );
 
-export const Message = mongoose.models.Message || model("Message", schema);
+export const Message = mongoose.model("Message", messageSchema);
