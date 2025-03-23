@@ -1,7 +1,7 @@
-import mongoose from "mongoose";
-import jwt from "jsonwebtoken";
-import { v4 as uuid } from "uuid";
 import { v2 as cloudinary } from "cloudinary";
+import jwt from "jsonwebtoken";
+import mongoose from "mongoose";
+import { v4 as uuid } from "uuid";
 import { getBase64, getSockets } from "../lib/helper.js";
 
 const cookieOptions = {
@@ -14,7 +14,9 @@ const cookieOptions = {
 const connectDB = (uri) => {
   mongoose
     .connect(uri, { dbName: "Chattu" })
-    .then((data) => console.log(`Connected to DB: ${data.connection.host}`))
+    .then((data) => {
+      console.log(`Connected to DB: ${data.connection.host}`);
+    })
     .catch((err) => {
       throw err;
     });
@@ -65,10 +67,5 @@ const deletFilesFromCloudinary = async (public_ids) => {
 };
 
 export {
-  connectDB,
-  sendToken,
-  cookieOptions,
-  emitEvent,
-  deletFilesFromCloudinary,
-  uploadFilesToCloudinary,
+    connectDB, cookieOptions, deletFilesFromCloudinary, emitEvent, sendToken, uploadFilesToCloudinary
 };

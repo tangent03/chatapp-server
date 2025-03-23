@@ -6,10 +6,10 @@ import { Chat } from "../models/chat.js";
 import { Request } from "../models/request.js";
 import { User } from "../models/user.js";
 import {
-  cookieOptions,
-  emitEvent,
-  sendToken,
-  uploadFilesToCloudinary,
+    cookieOptions,
+    emitEvent,
+    sendToken,
+    uploadFilesToCloudinary,
 } from "../utils/features.js";
 import { ErrorHandler } from "../utils/utility.js";
 
@@ -18,13 +18,9 @@ const newUser = TryCatch(async (req, res, next) => {
   const { name, username, password, bio } = req.body;
   const file = req.file;
 
-  console.log("Received Signup Data:", { name, username, bio });
-  console.log("Received File:", file?.originalname);
-
   if (!file) return next(new ErrorHandler("Please Upload Avatar"));
 
   const result = await uploadFilesToCloudinary([file]);
-  console.log("Cloudinary Upload Result:", result);
 
   const avatar = {
     public_id: result[0].public_id,
@@ -234,13 +230,13 @@ const getMyFriends = TryCatch(async (req, res) => {
 });
 
 export {
-  acceptFriendRequest,
-  getMyFriends,
-  getMyNotifications,
-  getMyProfile,
-  login,
-  logout,
-  newUser,
-  searchUser,
-  sendFriendRequest,
+    acceptFriendRequest,
+    getMyFriends,
+    getMyNotifications,
+    getMyProfile,
+    login,
+    logout,
+    newUser,
+    searchUser,
+    sendFriendRequest
 };

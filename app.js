@@ -116,8 +116,6 @@ io.on("connection", (socket) => {
   socket.emit(ONLINE_USERS, Array.from(onlineUsers));
 
   socket.on(NEW_MESSAGE, async ({ chatId, members, message }) => {
-    console.log(`New message in chat ${chatId} from ${user.name}`);
-    
     try {
       // Create DB message first
       const messageForDB = {
@@ -166,7 +164,6 @@ io.on("connection", (socket) => {
         
       io.to(otherMembersSocket).emit(NEW_MESSAGE_ALERT, { chatId });
       
-      console.log(`Message sent successfully: ${messageForRealTime._id}`);
     } catch (error) {
       console.error("Error saving message:", error);
       // Notify only the sender about the error
@@ -190,16 +187,11 @@ io.on("connection", (socket) => {
   // Handle message reactions
   socket.on(MESSAGE_REACTION, async ({ messageId, reaction, userId }) => {
     try {
-      console.log("Received reaction:", { messageId, reaction, userId });
-      
       // Find the message in database
       const message = await Message.findById(messageId);
       if (!message) {
-        console.log("Message not found:", messageId);
         return;
       }
-      
-      console.log("Message found:", message._id);
       
       // Import Chat model dynamically to avoid circular dependency
       const Chat = mongoose.model('Chat');
@@ -207,11 +199,8 @@ io.on("connection", (socket) => {
       // Get chat members to notify them
       const chat = await Chat.findById(message.chat);
       if (!chat) {
-        console.log("Chat not found:", message.chat);
         return;
       }
-      
-      console.log("Chat found:", chat._id);
       
       // Ensure reactions array exists and is valid
       let reactions = [];
@@ -221,7 +210,6 @@ io.on("connection", (socket) => {
       
       // Validate userId and reaction
       if (!userId || !reaction) {
-        console.log("Invalid userId or reaction:", { userId, reaction });
         return;
       }
       
@@ -265,8 +253,6 @@ io.on("connection", (socket) => {
         return acc;
       }, []);
       
-      console.log("Grouped reactions to send:", groupedReactions);
-      
       // Notify all members
       const membersSockets = getSockets(chat.members);
       io.to(membersSockets).emit(MESSAGE_REACTION, {
@@ -282,8 +268,6 @@ io.on("connection", (socket) => {
   // Handle message seen status
   socket.on(MESSAGE_SEEN, async ({ messageId, chatId, userId }) => {
     try {
-      console.log("Received message seen:", { messageId, chatId, userId });
-      
       // Use findOneAndUpdate instead of find + save to avoid validation errors
       const result = await Message.findByIdAndUpdate(
         messageId, 
@@ -292,11 +276,8 @@ io.on("connection", (socket) => {
       );
       
       if (!result) {
-        console.log("Message not found for seen status:", messageId);
         return;
       }
-      
-      console.log("Message updated seen status:", result._id);
       
       // Import Chat model dynamically to avoid circular dependency
       const Chat = mongoose.model('Chat');
@@ -304,11 +285,8 @@ io.on("connection", (socket) => {
       // Get chat to notify members
       const chat = await Chat.findById(chatId);
       if (!chat) {
-        console.log("Chat not found for seen status:", chatId);
         return;
       }
-      
-      console.log("Chat found for seen status:", chat._id);
       
       // Notify all members
       const membersSockets = getSockets(chat.members);
@@ -345,8 +323,6 @@ io.on("connection", (socket) => {
 
   // WebRTC Call Events
   socket.on(CALL_REQUEST, (data) => {
-    console.log('Call request received:', data);
-    
     // Check if receiverId exists
     if (!data.receiverId) {
       console.error('Missing receiverId in call request:', data);
@@ -359,17 +335,12 @@ io.on("connection", (socket) => {
     
     // Get receiver's socket ID
     const receiverSocketId = userSocketIDs.get(data.receiverId.toString());
-    console.log(`Looking for receiver socket for ID: ${data.receiverId}`);
-    console.log(`Found socket ID: ${receiverSocketId || 'Not found'}`);
-    console.log(`Current userSocketIDs map:`, Array.from(userSocketIDs.entries()));
     
     if (receiverSocketId) {
       // Forward call request to receiver
-      console.log(`Forwarding call request to socket ID: ${receiverSocketId}`);
       io.to(receiverSocketId).emit(CALL_REQUEST, data);
     } else {
       // Receiver not online, send rejection
-      console.log(`Receiver ${data.receiverId} not online, rejecting call`);
       socket.emit(CALL_REJECTED, {
         to: data.callerId,
         from: data.receiverId,
@@ -379,8 +350,6 @@ io.on("connection", (socket) => {
   });
 
   socket.on(CALL_ACCEPTED, (data) => {
-    console.log('Call accepted:', data);
-    
     // Get caller's socket ID
     const callerSocketId = userSocketIDs.get(data.to.toString());
     
@@ -391,8 +360,6 @@ io.on("connection", (socket) => {
   });
 
   socket.on(CALL_REJECTED, (data) => {
-    console.log('Call rejected:', data);
-    
     // Get caller's socket ID
     const callerSocketId = userSocketIDs.get(data.to.toString());
     
@@ -403,8 +370,6 @@ io.on("connection", (socket) => {
   });
 
   socket.on(CALL_ENDED, ({ to, from }) => {
-    console.log(`Call ended by ${from} to ${to}`);
-    
     if (!to || !from) {
       console.error('Missing to or from in CALL_ENDED event');
       return;
@@ -414,7 +379,6 @@ io.on("connection", (socket) => {
     const toSocketId = userSocketIDs.get(to.toString());
     
     if (toSocketId) {
-      console.log(`Found socket ID for recipient: ${toSocketId}`);
       io.to(toSocketId).emit(CALL_ENDED, { from });
     } else {
       console.error(`No socket ID found for recipient: ${to}`);
