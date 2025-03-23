@@ -6,7 +6,6 @@ import express from "express";
 import { createServer } from "http";
 import mongoose from "mongoose";
 import { Server } from "socket.io";
-import { corsOptions } from "./constants/config.js";
 import {
     CALL_ACCEPTED,
     CALL_ENDED,
@@ -57,15 +56,42 @@ cloudinary.config({
 const app = express();
 const server = createServer(app);
 const io = new Server(server, {
-  cors: corsOptions,
+  cors: {
+    origin: function(origin, callback) {
+      // Allow requests with no origin
+      if (!origin) return callback(null, true);
+      
+      if (allowedOrigins.indexOf(origin) === -1) {
+        console.log(`Socket.io blocked connection from origin: ${origin}`);
+        return callback(new Error('Not allowed by CORS'), false);
+      }
+      return callback(null, true);
+    },
+    methods: ["GET", "POST"],
+    credentials: true,
+    transports: ['websocket', 'polling']
+  },
+  allowEIO3: true // Enable compatibility with Socket.IO v2 clients
 });
 
 app.set("io", io);
 
 // Set allowed origins based on environment
 const allowedOrigins = process.env.NODE_ENV === 'production' 
-  ? [process.env.FRONTEND_URL, 'https://chatapp-frontend-eosin-beta.vercel.app'] 
+  ? [process.env.FRONTEND_URL, 'https://chatapp-frontend-eosin-beta.vercel.app', 'https://chatapp-frontend-eosin-beta.vercel.app/'] 
   : ['http://localhost:5173', 'http://localhost:4173', 'http://localhost:3000'];
+
+// Specific route for handling preflight requests
+app.options('*', (req, res) => {
+  const origin = req.headers.origin;
+  if (allowedOrigins.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+  }
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  res.status(204).end();
+});
 
 // Configure CORS
 app.use(cors({
@@ -74,6 +100,7 @@ app.use(cors({
     if (!origin) return callback(null, true);
     
     if (allowedOrigins.indexOf(origin) === -1) {
+      console.log(`Blocked request from origin: ${origin}`);
       const msg = `The CORS policy for this site does not allow access from the specified Origin: ${origin}`;
       return callback(new Error(msg), false);
     }
@@ -81,11 +108,35 @@ app.use(cors({
   },
   credentials: true, // Allow cookies to be sent with requests
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Origin', 'X-Requested-With'],
+  preflightContinue: false,
+  optionsSuccessStatus: 204
 }));
 
 app.use(express.json());
 app.use(cookieParser());
+
+// Add CORS headers middleware
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  console.log(`Request from origin: ${origin || 'No origin'}, Method: ${req.method}, Path: ${req.path}`);
+  
+  if (allowedOrigins.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+    console.log(`Setting Access-Control-Allow-Origin: ${origin}`);
+  }
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  
+  // Handle preflight OPTIONS requests
+  if (req.method === 'OPTIONS') {
+    console.log('Handling OPTIONS preflight request');
+    return res.status(204).end();
+  }
+  
+  next();
+});
 
 app.use("/api/v1/user", userRoute);
 app.use("/api/v1/chat", chatRoute);
@@ -93,6 +144,15 @@ app.use("/api/v1/admin", adminRoute);
 
 app.get("/", (req, res) => {
   res.send("Hello World");
+});
+
+// Test endpoint for CORS
+app.get("/test-cors", (req, res) => {
+  res.json({ 
+    success: true, 
+    message: "CORS is working properly!",
+    origin: req.headers.origin || "No origin in request"
+  });
 });
 
 io.use((socket, next) => {

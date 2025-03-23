@@ -9,6 +9,8 @@ const cookieOptions = {
   sameSite: "none",
   httpOnly: true,
   secure: true,
+  domain: process.env.NODE_ENV === 'production' ? undefined : undefined,
+  path: '/'
 };
 
 const connectDB = (uri) => {
@@ -69,3 +71,4 @@ const deletFilesFromCloudinary = async (public_ids) => {
 export {
     connectDB, cookieOptions, deletFilesFromCloudinary, emitEvent, sendToken, uploadFilesToCloudinary
 };
+
